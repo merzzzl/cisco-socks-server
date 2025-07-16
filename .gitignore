@@ -1,7 +1,7 @@
 /.vscode
 .DS_Store
 /.tool-versions
-/warp
+/cisco-socks5
 /.devcontainer
 vendor/
 .idea/

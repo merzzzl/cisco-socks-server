@@ -10,8 +10,8 @@ import (
 	socks5 "github.com/things-go/go-socks5"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/merzzzl/cisco-socks5/internal/utils/cisco"
 	"github.com/merzzzl/cisco-socks5/internal/utils/log"
-	"github.com/merzzzl/cisco-socks5/internal/utils/sys"
 )
 
 type Service struct {
@@ -73,6 +73,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 func (s *Service) StartCisco(ctx context.Context) error {
 	ctx, closer := context.WithCancel(ctx)
+	maxRetries := 3
 
 	defer func() {
 		closer()
@@ -81,25 +82,14 @@ func (s *Service) StartCisco(ctx context.Context) error {
 		s.status.PFDisabled = false
 	}()
 
-	if err := sys.CiscoConnect(s.ciscoProfile, s.ciscoUser, s.ciscoPassword); err != nil {
-		return fmt.Errorf("failed to connect to cisco: %w", err)
-	}
-
-	_ = sys.DisablePF()
-
-	maxRetries := 3
-
 	for ctx.Err() == nil {
-		connected, wait, err := sys.CiscoCurrentState()
+		connected, err := cisco.IsCiscoConected()
 		if err != nil {
 			log.Error().Err(err).Msgf("CIS", "failed to get cisco state: %v", err)
 		}
 
-		s.status.CiscoConnected = connected
-		s.status.PFDisabled = connected
-
-		if !connected && !wait && err == nil {
-			if err := sys.CiscoConnect(s.ciscoProfile, s.ciscoUser, s.ciscoPassword); err != nil {
+		if !connected && err == nil {
+			if err := cisco.CiscoConnect(s.ciscoProfile, s.ciscoUser, s.ciscoPassword); err != nil {
 				if maxRetries == 0 {
 					return fmt.Errorf("failed to connect to cisco: %w", err)
 				}
@@ -108,17 +98,23 @@ func (s *Service) StartCisco(ctx context.Context) error {
 
 				maxRetries--
 			} else {
-				_ = sys.DisablePF()
-				maxRetries = 3
+				s.status.CiscoConnected = true
+				s.status.PFDisabled = false
+			}
+		}
+
+		if s.status.CiscoConnected && !s.status.PFDisabled {
+			if err := cisco.DisablePF(); err != nil {
+				log.Error().Err(err).Msgf("NPF", "failed to disable network pf: %v", err)
+			} else {
+				s.status.PFDisabled = true
 			}
 		}
 
 		time.Sleep(5 * time.Second)
-
-		continue
 	}
 
-	if err := sys.CiscoDisconnect(); err != nil {
+	if err := cisco.CiscoDisconnect(); err != nil {
 		return fmt.Errorf("failed to disconnect cisco: %w", err)
 	}
 

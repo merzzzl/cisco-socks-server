@@ -1,4 +1,4 @@
-package sys
+package cisco
 
 import (
 	"bytes"
@@ -42,22 +42,21 @@ func CiscoConnect(profile, user, password string) error {
 
 	currentState := getLastCiscoState(string(output))
 	if currentState != ciscoStateConnected {
-		return fmt.Errorf("VPN connection not established: %s", string(output))
+		return fmt.Errorf("vpn connection not established: %s", string(output))
 	}
 
 	return nil
 }
 
-func CiscoCurrentState() (bool, bool, error) {
+func IsCiscoConected() (bool, error) {
 	output, err := Command("%s -s state", ciscoPath)
 	if err != nil {
-		return false, false, fmt.Errorf("vpn connection error: %v\n", err)
+		return false, fmt.Errorf("vpn connection error: %v\n", err)
 	}
 
 	currentState := getLastCiscoState(string(output))
-	currentNotice := getLastCiscoNotice(string(output))
 
-	return currentState == ciscoStateConnected, currentNotice == ciscoNoticeReadyForConnect, nil
+	return currentState == ciscoStateConnected, nil
 }
 
 func CiscoDisconnect() error {
@@ -70,25 +69,6 @@ func CiscoDisconnect() error {
 }
 
 func getLastCiscoState(output string) string {
-	_, states := parseCiscoOutput(output)
-	if len(states) > 0 {
-		return getCiscoState(states[len(states)-1])
-	}
-
-	return ciscoUnknown
-}
-
-func getLastCiscoNotice(output string) string {
-	notices, _ := parseCiscoOutput(output)
-	if len(notices) > 0 {
-		return getCiscoNotice(notices[len(notices)-1])
-	}
-
-	return ciscoUnknown
-}
-
-func parseCiscoOutput(output string) ([]string, []string) {
-	var notices []string
 	var states []string
 
 	lines := strings.Split(output, "\n")
@@ -96,42 +76,39 @@ func parseCiscoOutput(output string) ([]string, []string) {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 
-		if strings.HasPrefix(line, ">> notice: ") {
-			notice := strings.TrimPrefix(line, ">> notice: ")
-			notices = append(notices, notice)
-		}
-
 		if strings.HasPrefix(line, ">> state: ") {
 			state := strings.TrimPrefix(line, ">> state: ")
 			states = append(states, state)
 		}
 	}
 
-	return notices, states
-}
-
-func getCiscoState(state string) string {
-	switch state {
-	case "Подключено", "Connected":
-		return ciscoStateConnected
-	case "Отключено", "Disconnected":
-		return ciscoStateDisconnected
-	default:
-		return ciscoUnknown
+	if len(states) > 0 {
+		switch states[len(states)-1] {
+		case "Подключено", "Connected":
+			return ciscoStateConnected
+		case "Отключено", "Disconnected":
+			return ciscoStateDisconnected
+		default:
+			return ciscoUnknown
+		}
 	}
-}
 
-func getCiscoNotice(notice string) string {
-	switch notice {
-	case "Готово к подключению.":
-		return ciscoNoticeReadyForConnect
-	default:
-		return ciscoUnknown
-	}
+	return ciscoUnknown
 }
 
 func DisablePF() error {
 	_, _ = Command("pfctl -d")
 
 	return nil
+}
+
+func Command(cmd string, agrs ...any) (string, error) {
+	str := fmt.Sprintf(cmd, agrs...)
+
+	out, err := exec.Command("sh", "-c", str).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", str, err)
+	}
+
+	return string(out), nil
 }
