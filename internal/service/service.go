@@ -83,13 +83,13 @@ func (s *Service) StartCisco(ctx context.Context) error {
 	}()
 
 	for ctx.Err() == nil {
-		connected, err := cisco.IsCiscoConected()
+		connected, err := cisco.IsConected()
 		if err != nil {
 			log.Error().Err(err).Msgf("CIS", "failed to get cisco state: %v", err)
 		}
 
 		if !connected && err == nil {
-			if err := cisco.CiscoConnect(s.ciscoProfile, s.ciscoUser, s.ciscoPassword); err != nil {
+			if err := cisco.Connect(s.ciscoProfile, s.ciscoUser, s.ciscoPassword); err != nil {
 				if maxRetries == 0 {
 					return fmt.Errorf("failed to connect to cisco: %w", err)
 				}
@@ -114,7 +114,7 @@ func (s *Service) StartCisco(ctx context.Context) error {
 		time.Sleep(5 * time.Second)
 	}
 
-	if err := cisco.CiscoDisconnect(); err != nil {
+	if err := cisco.Disconnect(); err != nil {
 		return fmt.Errorf("failed to disconnect cisco: %w", err)
 	}
 
