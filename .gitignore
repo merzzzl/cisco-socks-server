@@ -1,0 +1,7 @@
+/.vscode
+.DS_Store
+/.tool-versions
+/cisco-socks-server
+/.devcontainer
+vendor/
+.idea/
