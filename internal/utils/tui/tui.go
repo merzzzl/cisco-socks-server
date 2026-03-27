@@ -84,10 +84,6 @@ func CreateTUI(svc *service.Service, level slog.Level) error {
 		if err := setupUptime(g, done, maxX); err != nil {
 			return err
 		}
-		if err := setupHelp(g, maxX); err != nil {
-			return err
-		}
-
 		return nil
 	})
 

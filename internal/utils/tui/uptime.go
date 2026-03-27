@@ -34,7 +34,10 @@ func setupUptime(g *gocui.Gui, done <-chan struct{}, maxX int) error {
 						m := int(d.Minutes()) % 60
 						s := int(d.Seconds()) % 60
 
-						fmt.Fprintf(v, " ⏱ %02d:%02d:%02d", h, m, s)
+						w := sidebarWidth - 3
+						line1 := fmt.Sprintf("⏱ %02d:%02d:%02d", h, m, s)
+
+						fmt.Fprintf(v, "%*s", w, line1)
 
 						return nil
 					})
