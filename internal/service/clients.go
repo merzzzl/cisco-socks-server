@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/merzzzl/cisco-socks-server/internal/utils/route"
 )
 
 const (
@@ -35,7 +37,13 @@ func newClientRegistry(static []LANClient) *clientRegistry {
 	r := &clientRegistry{clients: make(map[string]*clientEntry, len(static))}
 
 	for _, lc := range static {
-		r.clients[lc.IP] = &clientEntry{mac: lc.MAC, static: true}
+		// arp -S takes colon-separated octets only
+		mac, ok := route.CanonicalMAC(lc.MAC)
+		if !ok {
+			mac = ""
+		}
+
+		r.clients[lc.IP] = &clientEntry{mac: mac, static: true}
 	}
 
 	return r

@@ -339,19 +339,19 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] прокси доступен из LAN без `lan_clients` в конфиге (автообнаружение при заданном auth)
-- [ ] без auth и без `lan_discovery` поведение как раньше (только `lan_clients`)
-- [ ] ротация MAC клиента не ломает доступ и не вызывает ежесекундный перепин
-- [ ] смена Wi‑Fi сети не требует рестарта
-- [ ] без VPN CONNECT отклоняется, а не уходит мимо туннеля
-- [ ] старый конфиг `{ip, mac}` работает как раньше
-- [ ] `make test`, `make vet`, `golangci-lint run`
+- [x] прокси доступен из LAN без `lan_clients` в конфиге (автообнаружение при заданном auth) — `TestDiscoverClient`, `TestDiscoveryEnabled`; на живом маке — Post-Completion
+- [x] без auth и без `lan_discovery` поведение как раньше (только `lan_clients`) — `TestDiscoveryEnabled`, `TestSocksAuth` (loopback/LAN без кредов)
+- [x] ротация MAC клиента не ломает доступ и не вызывает ежесекундный перепин — `TestPinClients` (adopt без `pin`, второй тик без действий)
+- [x] смена Wi‑Fi сети не требует рестарта — `TestConfirmLAN`, `TestServeLANRebindsOnChange`; на живом маке — Post-Completion
+- [x] без VPN CONNECT отклоняется, а не уходит мимо туннеля — `TestVPNGate`
+- [x] старый конфиг `{ip, mac}` работает как раньше — `TestConfigValidate`, `TestClientRegistryCanonicalStaticMAC`
+- [x] `make test`, `make vet`, `golangci-lint run` — тесты и vet зелёные (в т.ч. `-race`, `GOOS=darwin` build/vet); golangci-lint v1.64.8: новых замечаний относительно базы нет, кроме тех же категорий, что уже есть в репо (`testpackage` для тестов в пакете, `err113` для `fmt.Errorf` в `config.go`, `gocritic hugeParam` на `New(Options)`)
 
 ### Task 10: [Final] Update documentation
 
-- [ ] обновить `CLAUDE.md`: LAN client pinning (реестр, adopt, автообнаружение, гейт auth/`lan_discovery`), снимок LAN больше не «один раз» (дебаунс, переоткрытие листенера), VPN-гейт CONNECT, список покрытого тестами чистого кода
-- [ ] обновить README: необязательные `lan_clients`/`mac`, `socks_user`/`socks_password`, `lan_discovery`, пример конфига twarp-клиента с кредами
-- [ ] переместить план в `docs/plans/completed/`
+- [x] обновить `CLAUDE.md`: LAN client pinning (реестр, adopt, автообнаружение, гейт auth/`lan_discovery`), снимок LAN больше не «один раз» (дебаунс, переоткрытие листенера), VPN-гейт CONNECT, список покрытого тестами чистого кода
+- [x] обновить README: необязательные `lan_clients`/`mac`, `socks_user`/`socks_password`, `lan_discovery`, пример конфига twarp-клиента с кредами
+- [x] переместить план в `docs/plans/completed/`
 
 ## Post-Completion
 

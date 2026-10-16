@@ -90,6 +90,17 @@ func TestClientRegistryResetNetwork(t *testing.T) {
 	}
 }
 
+func TestClientRegistryCanonicalStaticMAC(t *testing.T) {
+	t.Parallel()
+
+	r := newClientRegistry([]LANClient{{IP: staticIP, MAC: "72-CE-39-12-45-0F"}, {IP: discoveredIP}})
+
+	want := map[string]string{staticIP: staticMAC, discoveredIP: ""}
+	if snap := r.snapshot(); !maps.Equal(snap, want) {
+		t.Errorf("snapshot() = %v, want %v", snap, want)
+	}
+}
+
 func TestClientRegistrySnapshotIsCopy(t *testing.T) {
 	t.Parallel()
 
