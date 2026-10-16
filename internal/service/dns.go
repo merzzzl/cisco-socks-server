@@ -108,7 +108,7 @@ func (s *Service) forwardDNS(r *dns.Msg) (*dns.Msg, error) {
 
 	var lastErr error
 
-	for _, server := range s.dnsServers {
+	for _, server := range s.opts.DNSServers {
 		resp, _, err := client.Exchange(req, net.JoinHostPort(server, "53"))
 		if err != nil {
 			lastErr = err

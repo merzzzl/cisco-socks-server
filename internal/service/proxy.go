@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -30,17 +30,17 @@ func (*proxyLogger) Errorf(format string, args ...any) {
 // once when the tunnel goes away: their upstream legs are dead by then, and
 // without an explicit close clients hang until TCP gives up.
 type connTracker struct {
+	conns map[net.Conn]bool // value: accepted on the LAN listener
 	mu    sync.Mutex
-	conns map[net.Conn]struct{}
 }
 
 func newConnTracker() *connTracker {
-	return &connTracker{conns: make(map[net.Conn]struct{})}
+	return &connTracker{conns: make(map[net.Conn]bool)}
 }
 
-func (ct *connTracker) add(c net.Conn) {
+func (ct *connTracker) add(c net.Conn, lan bool) {
 	ct.mu.Lock()
-	ct.conns[c] = struct{}{}
+	ct.conns[c] = lan
 	ct.mu.Unlock()
 }
 
@@ -64,6 +64,56 @@ func (ct *connTracker) closeAll() int {
 	return n
 }
 
+// closeLAN drops the connections accepted on the LAN listener: after a
+// network change their peers are on a network we are no longer part of.
+func (ct *connTracker) closeLAN() int {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	n := 0
+
+	for c, lan := range ct.conns {
+		if !lan {
+			continue
+		}
+
+		_ = c.Close()
+
+		delete(ct.conns, c)
+
+		n++
+	}
+
+	return n
+}
+
+// remoteIPs is the set of peer IPs with live connections.
+func (ct *connTracker) remoteIPs() map[string]bool {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	ips := make(map[string]bool, len(ct.conns))
+
+	for c := range ct.conns {
+		if ap, ok := remoteAddrPort(c); ok {
+			ips[ap.Addr().String()] = true
+		}
+	}
+
+	return ips
+}
+
+func remoteAddrPort(c net.Conn) (netip.AddrPort, bool) {
+	tcp, ok := c.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return netip.AddrPort{}, false
+	}
+
+	ap := tcp.AddrPort()
+
+	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), true
+}
+
 func (s *Service) startProxy(ctx context.Context) error {
 	defer s.setStatus(func(st *State) {
 		st.ProxyStarted = false
@@ -75,19 +125,14 @@ func (s *Service) startProxy(ctx context.Context) error {
 		return nil
 	}
 
-	listeners, err := s.proxyListeners(ctx)
+	var lc net.ListenConfig
+
+	loopback, err := lc.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", proxyPort))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to listen on loopback: %w", err)
 	}
 
-	server := socks5.NewServer(socks5.WithConnectMiddleware(func(_ context.Context, _ io.Writer, request *socks5.Request) error {
-		slog.Info("connection to " + request.DestAddr.Address())
-
-		return nil
-	}), socks5.WithLogger(&proxyLogger{}))
-
-	tracker := newConnTracker()
-	defer tracker.closeAll()
+	defer s.conns.closeAll()
 
 	s.setStatus(func(st *State) {
 		st.ProxyStarted = true
@@ -95,16 +140,22 @@ func (s *Service) startProxy(ctx context.Context) error {
 
 	slog.Info("starting SOCKS5 server on " + proxyPort)
 
-	g, gctx := errgroup.WithContext(ctx)
-
-	for _, l := range listeners {
-		g.Go(func() error {
-			return acceptConns(gctx, l, server, tracker)
-		})
+	if s.opts.SocksUser == "" && s.opts.LANDiscovery {
+		slog.Warn("lan_discovery without socks_user: the LAN proxy is open to anyone on the network")
 	}
 
+	g, gctx := errgroup.WithContext(ctx)
+
 	g.Go(func() error {
-		s.dropConnsOnVPNLoss(gctx, tracker)
+		return s.acceptConns(gctx, loopback, s.newSocksServer(false), false)
+	})
+
+	g.Go(func() error {
+		return s.serveLAN(gctx, s.newSocksServer(true))
+	})
+
+	g.Go(func() error {
+		s.dropConnsOnVPNLoss(gctx)
 
 		return nil
 	})
@@ -114,9 +165,7 @@ func (s *Service) startProxy(ctx context.Context) error {
 	go func() {
 		<-gctx.Done()
 
-		for _, l := range listeners {
-			_ = l.Close()
-		}
+		_ = loopback.Close()
 	}()
 
 	if err := g.Wait(); err != nil {
@@ -128,39 +177,8 @@ func (s *Service) startProxy(ctx context.Context) error {
 	return nil
 }
 
-// proxyListeners opens the loopback listener (mandatory, serves localhost)
-// and, when a LAN interface is known, a wildcard listener pinned to it via
-// IP_BOUND_IF (serves LAN clients). The LAN listener is best-effort.
-func (s *Service) proxyListeners(ctx context.Context) ([]net.Listener, error) {
-	var lc net.ListenConfig
-
-	loopback, err := lc.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", proxyPort))
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on loopback: %w", err)
-	}
-
-	listeners := []net.Listener{loopback}
-
-	iface := s.GetState().LANInterface
-	if iface == "" {
-		slog.Warn("no LAN interface detected, proxy serves localhost only")
-
-		return listeners, nil
-	}
-
-	lan, err := listenBoundToInterface(ctx, iface)
-	if err != nil {
-		slog.Warn("failed to listen on LAN interface", "interface", iface, "error", err)
-
-		return listeners, nil
-	}
-
-	slog.Info("proxy bound to LAN interface", "interface", iface)
-
-	return append(listeners, lan), nil
-}
-
-func acceptConns(ctx context.Context, l net.Listener, server *socks5.Server, tracker *connTracker) error {
+// acceptConns serves l until ctx is done; lan marks the LAN listener.
+func (s *Service) acceptConns(ctx context.Context, l net.Listener, server *socks5.Server, lan bool) error {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -184,17 +202,21 @@ func acceptConns(ctx context.Context, l net.Listener, server *socks5.Server, tra
 			continue
 		}
 
-		tracker.add(conn)
+		s.conns.add(conn, lan)
 
 		go func() {
-			defer tracker.remove(conn)
+			defer s.conns.remove(conn)
+
+			if lan && s.discoveryEnabled() {
+				s.discoverClient(ctx, conn)
+			}
 
 			_ = server.ServeConn(conn)
 		}()
 	}
 }
 
-func (s *Service) dropConnsOnVPNLoss(ctx context.Context, tracker *connTracker) {
+func (s *Service) dropConnsOnVPNLoss(ctx context.Context) {
 	ticker := time.NewTicker(vpnWatchInterval)
 	defer ticker.Stop()
 
@@ -209,7 +231,7 @@ func (s *Service) dropConnsOnVPNLoss(ctx context.Context, tracker *connTracker) 
 
 		connected := s.GetState().CiscoConnected
 		if wasConnected && !connected {
-			if n := tracker.closeAll(); n > 0 {
+			if n := s.conns.closeAll(); n > 0 {
 				slog.Info(fmt.Sprintf("VPN lost, dropped %d active connections", n))
 			}
 		}
