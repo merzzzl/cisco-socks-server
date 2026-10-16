@@ -251,10 +251,10 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Create: `internal/service/clients.go`
 - Create: `internal/service/clients_test.go`
 
-- [ ] реализовать `clientRegistry` (`seen`, `lookup`, `setMAC`, `snapshot`, `expire`, `resetNetwork`)
-- [ ] конструктор из `[]LANClient` (статические записи)
-- [ ] тесты: статические не истекают; `resetNetwork` удаляет обнаруженных и сбрасывает MAC статических; обнаруженные истекают по TTL; IP из `live` не истекает; `seen` обновляет `LastSeen`, пустой MAC не затирает известный; `snapshot` — копия
-- [ ] `make test` — должно пройти
+- [x] реализовать `clientRegistry` (`seen`, `lookup`, `setMAC`, `snapshot`, `expire`, `resetNetwork`)
+- [x] конструктор из `[]LANClient` (статические записи)
+- [x] тесты: статические не истекают; `resetNetwork` удаляет обнаруженных и сбрасывает MAC статических; обнаруженные истекают по TTL; IP из `live` не истекает; `seen` обновляет `LastSeen`, пустой MAC не затирает известный; `snapshot` — копия
+- [x] `make test` — должно пройти
 
 ### Task 3: Пиннер поверх реестра + adopt MAC
 
