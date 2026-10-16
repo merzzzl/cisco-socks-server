@@ -92,7 +92,7 @@ func (sv *ciscoSupervisor) detectLAN(ctx context.Context) {
 		return
 	}
 
-	subnet, iface, err := route.DetectLAN(ctx)
+	subnet, iface, err := route.DetectLAN(ctx, "")
 	if err != nil {
 		if !errors.Is(err, route.ErrNoLANInterface) {
 			slog.Warn("failed to detect LAN", "error", err)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -30,17 +31,17 @@ func (*proxyLogger) Errorf(format string, args ...any) {
 // once when the tunnel goes away: their upstream legs are dead by then, and
 // without an explicit close clients hang until TCP gives up.
 type connTracker struct {
+	conns map[net.Conn]bool // value: accepted on the LAN listener
 	mu    sync.Mutex
-	conns map[net.Conn]struct{}
 }
 
 func newConnTracker() *connTracker {
-	return &connTracker{conns: make(map[net.Conn]struct{})}
+	return &connTracker{conns: make(map[net.Conn]bool)}
 }
 
-func (ct *connTracker) add(c net.Conn) {
+func (ct *connTracker) add(c net.Conn, lan bool) {
 	ct.mu.Lock()
-	ct.conns[c] = struct{}{}
+	ct.conns[c] = lan
 	ct.mu.Unlock()
 }
 
@@ -62,6 +63,56 @@ func (ct *connTracker) closeAll() int {
 	clear(ct.conns)
 
 	return n
+}
+
+// closeLAN drops the connections accepted on the LAN listener: after a
+// network change their peers are on a network we are no longer part of.
+func (ct *connTracker) closeLAN() int {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	n := 0
+
+	for c, lan := range ct.conns {
+		if !lan {
+			continue
+		}
+
+		_ = c.Close()
+
+		delete(ct.conns, c)
+
+		n++
+	}
+
+	return n
+}
+
+// remoteIPs is the set of peer IPs with live connections.
+func (ct *connTracker) remoteIPs() map[string]bool {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	ips := make(map[string]bool, len(ct.conns))
+
+	for c := range ct.conns {
+		if ap, ok := remoteAddrPort(c); ok {
+			ips[ap.Addr().String()] = true
+		}
+	}
+
+	return ips
+}
+
+func remoteAddrPort(c net.Conn) (netip.AddrPort, bool) {
+	tcp, ok := c.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return netip.AddrPort{}, false
+	}
+
+	ap := tcp.AddrPort()
+
+	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), true
 }
 
 func (s *Service) startProxy(ctx context.Context) error {
@@ -86,8 +137,7 @@ func (s *Service) startProxy(ctx context.Context) error {
 		return nil
 	}), socks5.WithLogger(&proxyLogger{}))
 
-	tracker := newConnTracker()
-	defer tracker.closeAll()
+	defer s.conns.closeAll()
 
 	s.setStatus(func(st *State) {
 		st.ProxyStarted = true
@@ -97,14 +147,14 @@ func (s *Service) startProxy(ctx context.Context) error {
 
 	g, gctx := errgroup.WithContext(ctx)
 
-	for _, l := range listeners {
+	for i, l := range listeners {
 		g.Go(func() error {
-			return acceptConns(gctx, l, server, tracker)
+			return s.acceptConns(gctx, l, server, i > 0)
 		})
 	}
 
 	g.Go(func() error {
-		s.dropConnsOnVPNLoss(gctx, tracker)
+		s.dropConnsOnVPNLoss(gctx)
 
 		return nil
 	})
@@ -160,7 +210,8 @@ func (s *Service) proxyListeners(ctx context.Context) ([]net.Listener, error) {
 	return append(listeners, lan), nil
 }
 
-func acceptConns(ctx context.Context, l net.Listener, server *socks5.Server, tracker *connTracker) error {
+// acceptConns serves l until ctx is done; lan marks the LAN listener.
+func (s *Service) acceptConns(ctx context.Context, l net.Listener, server *socks5.Server, lan bool) error {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -184,17 +235,17 @@ func acceptConns(ctx context.Context, l net.Listener, server *socks5.Server, tra
 			continue
 		}
 
-		tracker.add(conn)
+		s.conns.add(conn, lan)
 
 		go func() {
-			defer tracker.remove(conn)
+			defer s.conns.remove(conn)
 
 			_ = server.ServeConn(conn)
 		}()
 	}
 }
 
-func (s *Service) dropConnsOnVPNLoss(ctx context.Context, tracker *connTracker) {
+func (s *Service) dropConnsOnVPNLoss(ctx context.Context) {
 	ticker := time.NewTicker(vpnWatchInterval)
 	defer ticker.Stop()
 
@@ -209,7 +260,7 @@ func (s *Service) dropConnsOnVPNLoss(ctx context.Context, tracker *connTracker) 
 
 		connected := s.GetState().CiscoConnected
 		if wasConnected && !connected {
-			if n := tracker.closeAll(); n > 0 {
+			if n := s.conns.closeAll(); n > 0 {
 				slog.Info(fmt.Sprintf("VPN lost, dropped %d active connections", n))
 			}
 		}

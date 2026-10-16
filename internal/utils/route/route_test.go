@@ -1,6 +1,10 @@
 package route
 
-import "testing"
+import (
+	"net"
+	"net/netip"
+	"testing"
+)
 
 func TestParseDefaultNonTunnel(t *testing.T) {
 	t.Parallel()
@@ -41,13 +45,13 @@ func TestParseArpEntry(t *testing.T) {
 		{
 			name:  "permanent",
 			out:   "? (192.168.0.42) at 72:ce:39:12:45:f on en0 permanent [ethernet]\n",
-			want:  ArpEntry{MAC: "72:ce:39:12:45:f", Iface: "en0"},
+			want:  ArpEntry{MAC: "72:ce:39:12:45:0f", Iface: "en0"},
 			found: true,
 		},
 		{
-			name:  "leading zeros stripped and case folded",
-			out:   "? (192.168.0.42) at 02:0A:B:c:0:1 on en0 [ethernet]\n",
-			want:  ArpEntry{MAC: "2:a:b:c::1", Iface: "en0"},
+			name:  "leading zeros restored and case folded",
+			out:   "? (192.168.0.42) at 2:A:b:C:0:1 on en0 [ethernet]\n",
+			want:  ArpEntry{MAC: "02:0a:0b:0c:00:01", Iface: "en0"},
 			found: true,
 		},
 		{
@@ -76,7 +80,7 @@ func TestParseArpEntry(t *testing.T) {
 func TestDecidePin(t *testing.T) {
 	t.Parallel()
 
-	onLAN := ArpEntry{MAC: normalizeMAC("12:49:61:d3:72:48"), Iface: "en0"}
+	onLAN := ArpEntry{MAC: "12:49:61:d3:72:48", Iface: "en0"}
 	onTunnel := ArpEntry{MAC: onLAN.MAC, Iface: "utun4"}
 
 	tests := []struct {
@@ -87,7 +91,7 @@ func TestDecidePin(t *testing.T) {
 		found   bool
 	}{
 		{onLAN, "matches", "12:49:61:D3:72:48", PinNone, true},
-		{ArpEntry{MAC: "72:ce:39:12:45:f", Iface: "en0"}, "matches without leading zeros", "72:ce:39:12:45:0f", PinNone, true},
+		{ArpEntry{MAC: "72:ce:39:12:45:0f", Iface: "en0"}, "matches without leading zeros", "72:ce:39:12:45:f", PinNone, true},
 		{onLAN, "rotated mac on lan iface", "f4:d4:88:85:75:6f", PinAdopt, true},
 		{onLAN, "unknown mac learned on lan iface", "", PinAdopt, true},
 		{ArpEntry{}, "no entry", "12:49:61:d3:72:48", PinRepin, false},
@@ -104,5 +108,72 @@ func TestDecidePin(t *testing.T) {
 				t.Errorf("DecidePin() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCanonicalMAC(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"72:CE:39:12:45:F", "72:ce:39:12:45:0f", true},
+		{"72-ce-39-12-45-0f", "72:ce:39:12:45:0f", true},
+		{"0:0:0:0:0:1", "00:00:00:00:00:01", true},
+		{"(incomplete)", "", false},
+		{"", "", false},
+	}
+
+	for _, tt := range tests {
+		if got, ok := CanonicalMAC(tt.in); got != tt.want || ok != tt.ok {
+			t.Errorf("CanonicalMAC(%q) = %q, %v; want %q, %v", tt.in, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestIPv4Prefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		ipnet *net.IPNet
+		want  string
+		ok    bool
+	}{
+		{&net.IPNet{IP: net.IPv4(192, 168, 0, 42).To4(), Mask: net.CIDRMask(24, 32)}, "192.168.0.0/24", true},
+		{&net.IPNet{IP: net.IPv4(10, 1, 2, 3), Mask: net.CIDRMask(112, 128)}, "10.1.0.0/16", true},
+		{&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, "", false},
+	}
+
+	for _, tt := range tests {
+		got, ok := ipv4Prefix(tt.ipnet)
+		if ok != tt.ok || (ok && got.String() != tt.want) {
+			t.Errorf("ipv4Prefix(%v) = %v, %v; want %s, %v", tt.ipnet, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestPickCandidate(t *testing.T) {
+	t.Parallel()
+
+	cands := []lanCandidate{
+		{subnet: netip.MustParsePrefix("192.168.64.0/24"), iface: "bridge100"},
+		{subnet: netip.MustParsePrefix("192.168.0.0/24"), iface: "en0"},
+	}
+
+	if c, _ := pickCandidate(cands, "en0"); c.iface != "en0" {
+		t.Errorf("preferred interface must win, got %s", c.iface)
+	}
+
+	if c, _ := pickCandidate(cands, ""); c.iface != "bridge100" {
+		t.Errorf("without preference the first candidate wins, got %s", c.iface)
+	}
+
+	if c, _ := pickCandidate(cands, "en7"); c.iface != "bridge100" {
+		t.Errorf("a vanished preferred interface falls back to the first, got %s", c.iface)
+	}
+
+	if _, ok := pickCandidate(nil, "en0"); ok {
+		t.Error("no candidates must yield false")
 	}
 }

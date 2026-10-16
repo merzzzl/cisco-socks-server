@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -11,31 +12,35 @@ import (
 	"github.com/merzzzl/cisco-socks-server/internal/utils/route"
 )
 
-const pinInterval = time.Second
+const (
+	pinInterval          = time.Second
+	clientExpireInterval = time.Minute
+)
 
 // LANClient is a LAN host pinned to the LAN interface while the VPN is up
-// (see route.Pin).
+// (see route.Pin). MAC is optional: when empty it is learned from ARP.
 type LANClient struct {
 	IP  string `yaml:"ip"`
 	MAC string `yaml:"mac"`
 }
 
 type Service struct {
-	mu            sync.RWMutex
-	status        State
+	clients       *clientRegistry
+	conns         *connTracker
+	ciscoReady    chan struct{}
 	ciscoUser     string
 	ciscoPassword string
 	ciscoProfile  string
 	dnsServers    []string
-	lanClients    []LANClient
-	ciscoReady    chan struct{}
+	status        State
+	mu            sync.RWMutex
 }
 
 type State struct {
+	LANSubnet      netip.Prefix
+	LANInterface   string
 	CiscoConnected bool
 	PFDisabled     bool
-	LANSubnet      string
-	LANInterface   string
 	ProxyStarted   bool
 	DNSStarted     bool
 }
@@ -46,7 +51,8 @@ func New(ciscoUser, ciscoPassword, ciscoProfile string, dnsServers []string, lan
 		ciscoPassword: ciscoPassword,
 		ciscoProfile:  ciscoProfile,
 		dnsServers:    dnsServers,
-		lanClients:    lanClients,
+		clients:       newClientRegistry(lanClients),
+		conns:         newConnTracker(),
 		ciscoReady:    make(chan struct{}),
 	}
 }
@@ -80,14 +86,20 @@ func (s *Service) Start(ctx context.Context) error {
 		return s.startDNS(ctx)
 	})
 
-	if len(s.lanClients) > 0 {
-		g.Go(func() error {
-			return s.startPinner(ctx)
-		})
-	}
+	g.Go(func() error {
+		return s.startPinner(ctx)
+	})
 
 	return g.Wait()
 }
+
+// pinOps are the shell operations of a pinner tick, swapped out in tests.
+type pinOps struct {
+	lookup func(ctx context.Context, ip string) (route.ArpEntry, bool)
+	pin    func(ctx context.Context, ip, mac, iface string) error
+}
+
+var shellPinOps = pinOps{lookup: route.LookupARP, pin: route.Pin}
 
 func (s *Service) startPinner(ctx context.Context) error {
 	select {
@@ -96,27 +108,59 @@ func (s *Service) startPinner(ctx context.Context) error {
 		return nil
 	}
 
+	var lastExpire time.Time
+
 	for sleepCtx(ctx, pinInterval) {
+		if now := time.Now(); now.Sub(lastExpire) >= clientExpireInterval {
+			lastExpire = now
+
+			for _, ip := range s.clients.expire(now, discoveredClientTTL, s.conns.remoteIPs()) {
+				slog.Info("LAN client expired", "ip", ip)
+			}
+		}
+
 		state := s.GetState()
 		if !state.CiscoConnected || state.LANInterface == "" {
 			continue
 		}
 
-		for _, lc := range s.lanClients {
-			entry, found := route.LookupARP(ctx, lc.IP)
-			if route.DecidePin(entry, found, lc.MAC, state.LANInterface) != route.PinRepin {
-				continue
-			}
-
-			if err := route.Pin(ctx, lc.IP, lc.MAC, state.LANInterface); err != nil {
-				slog.Debug("arp pin failed", "ip", lc.IP, "error", err)
-			} else {
-				slog.Info("LAN client pinned: " + lc.IP + " -> " + lc.MAC)
-			}
-		}
+		s.pinClients(ctx, shellPinOps, state)
 	}
 
 	return nil
+}
+
+// pinClients keeps every registered client in the current LAN subnet
+// reachable. The check is read-only; ARP is mutated only on drift (see
+// route.DecidePin), because a re-pin drops in-flight frames.
+func (s *Service) pinClients(ctx context.Context, ops pinOps, state State) {
+	for ip, mac := range s.clients.snapshot() {
+		// a static client of another network must not be pinned here: the
+		// IP belongs to someone else (or no one) in this one
+		if addr, err := netip.ParseAddr(ip); err != nil || !state.LANSubnet.Contains(addr) {
+			continue
+		}
+
+		entry, found := ops.lookup(ctx, ip)
+
+		switch route.DecidePin(entry, found, mac, state.LANInterface) {
+		case route.PinAdopt:
+			s.clients.setMAC(ip, entry.MAC)
+
+			if mac == "" {
+				slog.Info("LAN client MAC learned", "ip", ip, "mac", entry.MAC)
+			} else {
+				slog.Warn("LAN client MAC changed", "ip", ip, "old", mac, "new", entry.MAC)
+			}
+		case route.PinRepin:
+			if err := ops.pin(ctx, ip, mac, state.LANInterface); err != nil {
+				slog.Debug("arp pin failed", "ip", ip, "error", err)
+			} else {
+				slog.Info("LAN client pinned", "ip", ip, "mac", mac)
+			}
+		case route.PinNone:
+		}
+	}
 }
 
 // sleepCtx waits for d and reports whether ctx is still alive afterwards.

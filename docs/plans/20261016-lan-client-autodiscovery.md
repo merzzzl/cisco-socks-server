@@ -262,14 +262,16 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Modify: `internal/service/service.go`
 - Modify: `internal/service/proxy.go` (`connTracker` в `Service`, метка `lan`, `remoteIPs`, `closeLAN`)
 
-- [ ] `Service` держит `*clientRegistry` и `*connTracker` вместо `[]LANClient`
-- [ ] `startPinner` запускается всегда; тик `pinClients(ctx, ops, state)` над `LookupARP` + `DecidePin` + `Pin`
-- [ ] пропуск IP вне `State.LANSubnet`
-- [ ] `PinAdopt` → `registry.setMAC` + Warn `old=… new=…`, без мутации ARP
-- [ ] `PinRepin` → `Pin`; Info при успехе, Debug при ошибке
-- [ ] раз в минуту `registry.expire(now, ttl, tracker.remoteIPs())`, Info «LAN client expired»
-- [ ] тесты на фейковых `pinOps`: adopt обновляет реестр и не вызывает `pin`; repin вызывает `pin` с известным MAC; пустой MAC без записи — ни одного вызова; IP вне подсети пропущен; `connTracker.remoteIPs`/`closeLAN`
-- [ ] `make test` — должно пройти
+- [x] `Service` держит `*clientRegistry` и `*connTracker` вместо `[]LANClient`
+- [x] `startPinner` запускается всегда; тик `pinClients(ctx, ops, state)` над `LookupARP` + `DecidePin` + `Pin`
+- [x] пропуск IP вне `State.LANSubnet`
+- [x] `PinAdopt` → `registry.setMAC` + Warn `old=… new=…`, без мутации ARP
+- [x] `PinRepin` → `Pin`; Info при успехе, Debug при ошибке
+- [x] раз в минуту `registry.expire(now, ttl, tracker.remoteIPs())`, Info «LAN client expired»
+- [x] тесты на фейковых `pinOps`: adopt обновляет реестр и не вызывает `pin`; repin вызывает `pin` с известным MAC; пустой MAC без записи — ни одного вызова; IP вне подсети пропущен; `connTracker.remoteIPs`/`closeLAN`
+- [x] ➕ `State.LANSubnet netip.Prefix` и `DetectLAN` → `netip.Prefix` сделаны здесь (нужны для фильтра по подсети), а не в Task 4
+- [x] ➕ `normalizeMAC` давал пустой октет для нуля (`2:a:b:c::1`) — такой MAC сломал бы `arp -S`; заменён на `route.CanonicalMAC` (двузначные октеты)
+- [x] `make test` — должно пройти
 
 ### Task 4: LANSubnet в State и автообнаружение в Accept
 
@@ -279,7 +281,7 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Modify: `internal/service/cisco.go`
 - Modify: `internal/service/proxy.go`
 
-- [ ] `State.LANSubnet netip.Prefix`, заполнять в `detectLAN`
+- [x] `State.LANSubnet netip.Prefix`, заполнять в `detectLAN` (сделано в Task 3)
 - [ ] `acceptConns` — метод с флагом `lan`; хук только для LAN-соединений и только при `discoveryEnabled`
 - [ ] хук: проверка подсети, `needsRefresh`, `LookupARP`, `registry.seen`; в горутине соединения до `ServeConn`
 - [ ] Info «LAN client discovered» только для новых IP
@@ -289,7 +291,7 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 ### Task 5: Отслеживание смены сети и переоткрытие LAN-листенера
 
 **Files:**
-- Modify: `internal/utils/route/route.go` (fallback предпочитает текущий интерфейс)
+- Modify: `internal/utils/route/route.go` (fallback предпочитает текущий интерфейс — `pickCandidate` сделан в Task 3)
 - Modify: `internal/service/cisco.go`
 - Modify: `internal/service/proxy.go`
 - Modify: `internal/service/service.go`
