@@ -14,7 +14,7 @@ import (
 const pinInterval = time.Second
 
 // LANClient is a LAN host pinned to the LAN interface while the VPN is up
-// (see route.EnsureClientPinned).
+// (see route.Pin).
 type LANClient struct {
 	IP  string `yaml:"ip"`
 	MAC string `yaml:"mac"`
@@ -103,9 +103,14 @@ func (s *Service) startPinner(ctx context.Context) error {
 		}
 
 		for _, lc := range s.lanClients {
-			if repinned, err := route.EnsureClientPinned(ctx, lc.IP, lc.MAC, state.LANInterface); err != nil {
+			entry, found := route.LookupARP(ctx, lc.IP)
+			if route.DecidePin(entry, found, lc.MAC, state.LANInterface) != route.PinRepin {
+				continue
+			}
+
+			if err := route.Pin(ctx, lc.IP, lc.MAC, state.LANInterface); err != nil {
 				slog.Debug("arp pin failed", "ip", lc.IP, "error", err)
-			} else if repinned {
+			} else {
 				slog.Info("LAN client pinned: " + lc.IP + " -> " + lc.MAC)
 			}
 		}

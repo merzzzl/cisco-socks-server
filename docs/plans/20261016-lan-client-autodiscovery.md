@@ -238,12 +238,12 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Modify: `internal/utils/route/route.go`
 - Modify: `internal/utils/route/route_test.go`
 
-- [ ] добавить `ArpEntry`, `parseArpEntry`, `LookupARP` (через `shell.Run`)
-- [ ] выделить `Pin(ctx, ip, mac, iface) error` (`route change` + `arp -S ... temp`); удалить `EnsureClientPinned` и `arpEntryMatches`
-- [ ] добавить экспортируемые `PinAction` (`PinNone`/`PinAdopt`/`PinRepin`) и `DecidePin`
-- [ ] тесты `parseArpEntry`: обычная запись, `permanent`, `-- no entry`, `(incomplete)`, MAC без ведущих нулей, запись на `utun4`
-- [ ] тесты `DecidePin`: none / adopt (другой MAC на том же iface; пустой wantMAC на том же iface) / repin (нет записи, чужой iface) / none без MAC (нет записи; запись на `utun4`)
-- [ ] `make test` — должно пройти
+- [x] добавить `ArpEntry`, `parseArpEntry`, `LookupARP` (через `shell.Run`)
+- [x] выделить `Pin(ctx, ip, mac, iface) error` (`route change` + `arp -S ... temp`); удалить `EnsureClientPinned` и `arpEntryMatches`
+- [x] добавить экспортируемые `PinAction` (`PinNone`/`PinAdopt`/`PinRepin`) и `DecidePin`
+- [x] тесты `parseArpEntry`: обычная запись, `permanent`, `-- no entry`, `(incomplete)`, MAC без ведущих нулей, запись на `utun4`
+- [x] тесты `DecidePin`: none / adopt (другой MAC на том же iface; пустой wantMAC на том же iface) / repin (нет записи, чужой iface) / none без MAC (нет записи; запись на `utun4`)
+- [x] `make test` — должно пройти
 
 ### Task 2: Реестр клиентов
 
