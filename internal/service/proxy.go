@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -126,16 +125,12 @@ func (s *Service) startProxy(ctx context.Context) error {
 		return nil
 	}
 
-	listeners, err := s.proxyListeners(ctx)
+	var lc net.ListenConfig
+
+	loopback, err := lc.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", proxyPort))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to listen on loopback: %w", err)
 	}
-
-	server := socks5.NewServer(socks5.WithConnectMiddleware(func(_ context.Context, _ io.Writer, request *socks5.Request) error {
-		slog.Info("connection to " + request.DestAddr.Address())
-
-		return nil
-	}), socks5.WithLogger(&proxyLogger{}))
 
 	defer s.conns.closeAll()
 
@@ -145,13 +140,19 @@ func (s *Service) startProxy(ctx context.Context) error {
 
 	slog.Info("starting SOCKS5 server on " + proxyPort)
 
+	if s.opts.SocksUser == "" && s.opts.LANDiscovery {
+		slog.Warn("lan_discovery without socks_user: the LAN proxy is open to anyone on the network")
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 
-	for i, l := range listeners {
-		g.Go(func() error {
-			return s.acceptConns(gctx, l, server, i > 0)
-		})
-	}
+	g.Go(func() error {
+		return s.acceptConns(gctx, loopback, s.newSocksServer(false), false)
+	})
+
+	g.Go(func() error {
+		return s.serveLAN(gctx, s.newSocksServer(true))
+	})
 
 	g.Go(func() error {
 		s.dropConnsOnVPNLoss(gctx)
@@ -164,9 +165,7 @@ func (s *Service) startProxy(ctx context.Context) error {
 	go func() {
 		<-gctx.Done()
 
-		for _, l := range listeners {
-			_ = l.Close()
-		}
+		_ = loopback.Close()
 	}()
 
 	if err := g.Wait(); err != nil {
@@ -176,38 +175,6 @@ func (s *Service) startProxy(ctx context.Context) error {
 	slog.Info("proxy server stopped")
 
 	return nil
-}
-
-// proxyListeners opens the loopback listener (mandatory, serves localhost)
-// and, when a LAN interface is known, a wildcard listener pinned to it via
-// IP_BOUND_IF (serves LAN clients). The LAN listener is best-effort.
-func (s *Service) proxyListeners(ctx context.Context) ([]net.Listener, error) {
-	var lc net.ListenConfig
-
-	loopback, err := lc.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", proxyPort))
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on loopback: %w", err)
-	}
-
-	listeners := []net.Listener{loopback}
-
-	iface := s.GetState().LANInterface
-	if iface == "" {
-		slog.Warn("no LAN interface detected, proxy serves localhost only")
-
-		return listeners, nil
-	}
-
-	lan, err := listenBoundToInterface(ctx, iface)
-	if err != nil {
-		slog.Warn("failed to listen on LAN interface", "interface", iface, "error", err)
-
-		return listeners, nil
-	}
-
-	slog.Info("proxy bound to LAN interface", "interface", iface)
-
-	return append(listeners, lan), nil
 }
 
 // acceptConns serves l until ctx is done; lan marks the LAN listener.

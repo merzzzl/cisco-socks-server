@@ -296,13 +296,14 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Modify: `internal/service/proxy.go`
 - Modify: `internal/service/service.go`
 
-- [ ] `detectLAN` на каждом tick; чистая `lanChanged(cur, next)`; дебаунс на два тика через `pendingLAN`
-- [ ] при изменении: `setStatus`, `registry.resetNetwork()`, неблокирующий сигнал в `lanCheck`
-- [ ] в `startProxy` — владелец LAN-листенера: сравнение с открытым снимком, переоткрытие, `closeLAN`, повтор bind раз в 10 с
-- [ ] намеренное закрытие LAN-листенера не фатально; неожиданное — по-прежнему фатально
-- [ ] Info `LAN changed old=en0/192.168.0.0/24 new=en1/10.0.0.0/24`
-- [ ] тесты `lanChanged`: тот же снимок / другой iface / другая подсеть / пустой → найденный / найденный → пустой (не изменение); дебаунс: одиночный выброс не применяется, два тика подряд — применяется; fallback предпочитает текущий интерфейс (чистый выбор из списка кандидатов)
-- [ ] `make test` — должно пройти
+- [x] `detectLAN` на каждом tick; чистая `lanChanged(cur, next)`; дебаунс на два тика через `pendingLAN`
+- [x] при изменении: `setStatus`, `registry.resetNetwork()`, неблокирующий сигнал в `lanCheck`
+- [x] в `startProxy` — владелец LAN-листенера: сравнение с открытым снимком, переоткрытие, `closeLAN`, повтор bind раз в 10 с
+- [x] намеренное закрытие LAN-листенера не фатально; неожиданное — по-прежнему фатально
+- [x] Info `LAN changed old=en0/192.168.0.0/24 new=en1/10.0.0.0/24`
+- [x] тесты `lanChanged`: тот же снимок / другой iface / другая подсеть / пустой → найденный / найденный → пустой (не изменение); дебаунс: одиночный выброс не применяется, два тика подряд — применяется; fallback предпочитает текущий интерфейс (чистый выбор из списка кандидатов)
+- [x] ➕ bind LAN-листенера подменяется (`Service.listenLAN`), поэтому владелец листенера покрыт тестами на loopback: первый сигнал не переоткрывает, смена переоткрывает и рвёт LAN-соединения, неожиданное закрытие фатально, ошибка bind повторяется
+- [x] `make test` — должно пройти
 
 ### Task 6: Конфиг: необязательный MAC, auth, lan_discovery
 
@@ -322,19 +323,19 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Modify: `internal/service/proxy.go`
 - Modify: `internal/service/service.go`
 
-- [ ] два `socks5.Server`: loopback без auth, LAN — с `WithCredential` при заданном auth
-- [ ] `discoveryEnabled = auth || lan_discovery`; Warn при открытом LAN-прокси
-- [ ] тесты: `discoveryEnabled` (таблица); in-process SOCKS5-рукопожатие через `net.Pipe` к LAN-серверу: без кредов — отказ, с верными — `05 00`
-- [ ] `make test` — должно пройти
+- [x] два `socks5.Server`: loopback без auth, LAN — с `WithCredential` при заданном auth
+- [x] `discoveryEnabled = auth || lan_discovery`; Warn при открытом LAN-прокси
+- [x] тесты: `discoveryEnabled` (таблица); in-process SOCKS5-рукопожатие через `net.Pipe` к LAN-серверу: без кредов — отказ, с верными — `05 00`
+- [x] `make test` — должно пройти
 
 ### Task 8: VPN-гейт CONNECT
 
 **Files:**
 - Modify: `internal/service/proxy.go`
 
-- [ ] гейт-резолвер (`WithResolver`) и connect-middleware с явным `SendReply`; Debug-лог
-- [ ] тесты: in-process CONNECT через `net.Pipe` при `CiscoConnected=false` на IP получает reply `0x03`, на FQDN — `0x04` без вызова резолвера; при `true` — проходит дальше
-- [ ] `make test` — должно пройти
+- [x] гейт-резолвер (`WithResolver`) и connect-middleware с явным `SendReply`; Debug-лог
+- [x] тесты: in-process CONNECT через `net.Pipe` при `CiscoConnected=false` на IP получает reply `0x03`, на FQDN — `0x04` без вызова резолвера; при `true` — проходит дальше
+- [x] `make test` — должно пройти
 
 ### Task 9: Verify acceptance criteria
 

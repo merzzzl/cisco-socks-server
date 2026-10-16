@@ -25,10 +25,11 @@ const (
 // ciscoSupervisor is the per-run state of startCisco's polling loop.
 type ciscoSupervisor struct {
 	s                 *Service
+	reconnectingSince time.Time
+	pendingLAN        lanSnapshot // LAN change awaiting confirmation
+	connectDelay      time.Duration
 	readyNotified     bool
 	connectedByUs     bool
-	connectDelay      time.Duration
-	reconnectingSince time.Time
 }
 
 func (s *Service) startCisco(ctx context.Context) error {
@@ -83,30 +84,69 @@ func (sv *ciscoSupervisor) tick(ctx context.Context) time.Duration {
 	return delay
 }
 
-// detectLAN snapshots the LAN interface before Cisco hijacks the default
-// route; the proxy binds its LAN listener to it via IP_BOUND_IF so replies
-// egress via the physical NIC regardless of the routing table. Runs until the
-// first success and is never refreshed afterwards.
+// detectLAN tracks the LAN interface and subnet. The first detection runs
+// before Cisco hijacks the default route (the non-tunnel default stays in the
+// table afterwards, so later ticks still see it); the proxy binds its LAN
+// listener to the interface via IP_BOUND_IF so replies egress via the
+// physical NIC regardless of the routing table. A change (another Wi-Fi, an
+// Ethernet switch) re-binds the listener and resets the client registry.
 func (sv *ciscoSupervisor) detectLAN(ctx context.Context) {
-	if sv.s.GetState().LANInterface != "" {
-		return
-	}
+	cur := sv.s.lanSnapshot()
 
-	subnet, iface, err := route.DetectLAN(ctx, "")
+	subnet, iface, err := route.DetectLAN(ctx, cur.Iface)
 	if err != nil {
 		if !errors.Is(err, route.ErrNoLANInterface) {
 			slog.Warn("failed to detect LAN", "error", err)
 		}
 
+		sv.pendingLAN = lanSnapshot{}
+
 		return
 	}
 
-	slog.Info("LAN detected", "subnet", subnet, "interface", iface)
+	next := lanSnapshot{Subnet: subnet, Iface: iface}
+	if !sv.confirmLAN(cur, next) {
+		return
+	}
+
+	if cur.Iface == "" {
+		slog.Info("LAN detected", "subnet", subnet, "interface", iface)
+	} else {
+		slog.Info("LAN changed", "old", cur.String(), "new", next.String())
+
+		// clients of the old network; the first detection keeps the
+		// static MACs from the config
+		sv.s.clients.resetNetwork()
+	}
 
 	sv.s.setStatus(func(st *State) {
 		st.LANSubnet = subnet
 		st.LANInterface = iface
 	})
+
+	sv.s.notifyLANCheck()
+}
+
+// confirmLAN debounces LAN changes: the first detection applies at once, a
+// change only once the same snapshot was seen on two ticks in a row, so a
+// transient routing-table state does not re-bind the listener and drop LAN
+// connections.
+func (sv *ciscoSupervisor) confirmLAN(cur, next lanSnapshot) bool {
+	if !lanChanged(cur, next) {
+		sv.pendingLAN = lanSnapshot{}
+
+		return false
+	}
+
+	if cur.Iface != "" && sv.pendingLAN != next {
+		sv.pendingLAN = next
+
+		return false
+	}
+
+	sv.pendingLAN = lanSnapshot{}
+
+	return true
 }
 
 // setConnected records the VPN status. Losing the connection also resets

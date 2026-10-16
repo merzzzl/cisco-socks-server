@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -44,7 +45,9 @@ type Service struct {
 	clients    *clientRegistry
 	conns      *connTracker
 	ciscoReady chan struct{}
+	lanCheck   chan struct{} // LAN changed: the LAN listener re-checks State
 	arp        pinOps
+	listenLAN  func(ctx context.Context, iface string) (net.Listener, error)
 	status     State
 	opts       Options
 	mu         sync.RWMutex
@@ -65,7 +68,9 @@ func New(opts Options) *Service {
 		clients:    newClientRegistry(opts.LANClients),
 		conns:      newConnTracker(),
 		ciscoReady: make(chan struct{}),
+		lanCheck:   make(chan struct{}, 1),
 		arp:        pinOps{lookup: route.LookupARP, pin: route.Pin},
+		listenLAN:  listenBoundToInterface,
 	}
 }
 
