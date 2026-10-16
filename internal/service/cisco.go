@@ -152,7 +152,7 @@ func (sv *ciscoSupervisor) awaitReconnect(ctx context.Context) {
 // connect issues "vpn -s connect" and returns the delay before the next tick:
 // the regular poll interval, or an exponential backoff after a failure.
 func (sv *ciscoSupervisor) connect(ctx context.Context) time.Duration {
-	err := cisco.Connect(ctx, sv.s.ciscoProfile, sv.s.ciscoUser, sv.s.ciscoPassword)
+	err := cisco.Connect(ctx, sv.s.opts.CiscoProfile, sv.s.opts.CiscoUser, sv.s.opts.CiscoPassword)
 
 	switch {
 	case errors.Is(err, cisco.ErrAcquired):

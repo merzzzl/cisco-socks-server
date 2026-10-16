@@ -36,7 +36,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	srv := service.New(cfg.CiscoUser, cfg.CiscoPassword, cfg.CiscoProfile, cfg.DNSServers, cfg.LANClients)
+	srv := service.New(cfg.serviceOptions())
 
 	// buffered: the TUI goroutine must not block if run returns early
 	tuiErr := make(chan error, 1)

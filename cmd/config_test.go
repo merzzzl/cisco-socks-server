@@ -31,6 +31,11 @@ func TestConfigValidate(t *testing.T) {
 		{"dns hostname", func(c *Config) { c.DNSServers = []string{"dns.corp"} }, true},
 		{"ipv6 lan client", func(c *Config) { c.LANClients[0].IP = "fe80::1" }, true},
 		{"bad mac", func(c *Config) { c.LANClients[0].MAC = "zz" }, true},
+		{"lan client without mac", func(c *Config) { c.LANClients[0].MAC = "" }, false},
+		{"bad lan client ip", func(c *Config) { c.LANClients[0].IP = "192.168.0" }, true},
+		{"socks user without password", func(c *Config) { c.SocksUser = "proxy" }, true},
+		{"socks password without user", func(c *Config) { c.SocksPassword = "secret" }, true},
+		{"socks credentials", func(c *Config) { c.SocksUser, c.SocksPassword = "proxy", "secret" }, false},
 	}
 
 	for _, tt := range tests {

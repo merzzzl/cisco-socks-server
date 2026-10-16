@@ -40,10 +40,10 @@ func TestPinClients(t *testing.T) {
 		otherNetIP = "10.0.0.5"
 	)
 
-	s := New("u", "p", "vpn", nil, []LANClient{
+	s := New(Options{LANClients: []LANClient{
 		{IP: staticIP, MAC: staticMAC},
 		{IP: otherNetIP, MAC: staticMAC},
-	})
+	}})
 	s.clients.seen(discoveredIP, learnedMAC, time.Now())
 	s.clients.seen("192.168.0.7", "", time.Now())
 	s.clients.seen("192.168.0.8", "", time.Now())

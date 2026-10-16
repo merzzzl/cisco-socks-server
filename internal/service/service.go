@@ -24,16 +24,29 @@ type LANClient struct {
 	MAC string `yaml:"mac"`
 }
 
+// Options configures a Service.
+type Options struct {
+	CiscoUser     string
+	CiscoPassword string
+	CiscoProfile  string
+	// SocksUser/SocksPassword, when set, require SOCKS5 username/password
+	// auth on the LAN listener (loopback stays open).
+	SocksUser     string
+	SocksPassword string
+	DNSServers    []string
+	LANClients    []LANClient
+	// LANDiscovery enables client autodiscovery without auth, i.e. an open
+	// proxy for everyone on the network. Auth enables it on its own.
+	LANDiscovery bool
+}
+
 type Service struct {
-	clients       *clientRegistry
-	conns         *connTracker
-	ciscoReady    chan struct{}
-	ciscoUser     string
-	ciscoPassword string
-	ciscoProfile  string
-	dnsServers    []string
-	status        State
-	mu            sync.RWMutex
+	clients    *clientRegistry
+	conns      *connTracker
+	ciscoReady chan struct{}
+	status     State
+	opts       Options
+	mu         sync.RWMutex
 }
 
 type State struct {
@@ -45,15 +58,12 @@ type State struct {
 	DNSStarted     bool
 }
 
-func New(ciscoUser, ciscoPassword, ciscoProfile string, dnsServers []string, lanClients []LANClient) *Service {
+func New(opts Options) *Service {
 	return &Service{
-		ciscoUser:     ciscoUser,
-		ciscoPassword: ciscoPassword,
-		ciscoProfile:  ciscoProfile,
-		dnsServers:    dnsServers,
-		clients:       newClientRegistry(lanClients),
-		conns:         newConnTracker(),
-		ciscoReady:    make(chan struct{}),
+		opts:       opts,
+		clients:    newClientRegistry(opts.LANClients),
+		conns:      newConnTracker(),
+		ciscoReady: make(chan struct{}),
 	}
 }
 

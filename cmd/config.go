@@ -17,8 +17,11 @@ type Config struct {
 	CiscoUser     string              `yaml:"user"`
 	CiscoPassword string              `yaml:"password"`
 	CiscoProfile  string              `yaml:"profile"`
+	SocksUser     string              `yaml:"socks_user"`
+	SocksPassword string              `yaml:"socks_password"`
 	DNSServers    []string            `yaml:"dns_servers"`
 	LANClients    []service.LANClient `yaml:"lan_clients"`
+	LANDiscovery  bool                `yaml:"lan_discovery"`
 	noTUI         bool
 	debug         bool
 }
@@ -88,10 +91,32 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: lan_clients[%d]: invalid IPv4 address %q", i, lc.IP)
 		}
 
+		// optional: learned from ARP when empty
+		if lc.MAC == "" {
+			continue
+		}
+
 		if _, err := net.ParseMAC(lc.MAC); err != nil {
 			return fmt.Errorf("config: lan_clients[%d]: invalid MAC %q: %w", i, lc.MAC, err)
 		}
 	}
 
+	if (c.SocksUser == "") != (c.SocksPassword == "") {
+		return fmt.Errorf("config: socks_user and socks_password must be set together")
+	}
+
 	return nil
+}
+
+func (c *Config) serviceOptions() service.Options {
+	return service.Options{
+		CiscoUser:     c.CiscoUser,
+		CiscoPassword: c.CiscoPassword,
+		CiscoProfile:  c.CiscoProfile,
+		DNSServers:    c.DNSServers,
+		LANClients:    c.LANClients,
+		SocksUser:     c.SocksUser,
+		SocksPassword: c.SocksPassword,
+		LANDiscovery:  c.LANDiscovery,
+	}
 }
