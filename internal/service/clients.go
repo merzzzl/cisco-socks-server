@@ -1,14 +1,22 @@
 package service
 
 import (
+	"context"
+	"log/slog"
 	"maps"
+	"net"
 	"sync"
 	"time"
 )
 
-// discoveredClientTTL is how long a discovered client stays pinned after it
-// was last seen on Accept (live connections keep it regardless).
-const discoveredClientTTL = 30 * time.Minute
+const (
+	// discoveredClientTTL is how long a discovered client stays pinned
+	// after it was last seen on Accept (live connections keep it anyway).
+	discoveredClientTTL = 30 * time.Minute
+	// clientRefreshInterval throttles the ARP lookup of the discovery hook:
+	// a shell-out per connection would slow down busy clients.
+	clientRefreshInterval = time.Minute
+)
 
 type clientEntry struct {
 	lastSeen time.Time
@@ -125,4 +133,49 @@ func (r *clientRegistry) resetNetwork() {
 	for _, e := range r.clients {
 		e.mac = ""
 	}
+}
+
+// discoveryEnabled reports whether LAN clients are discovered on Accept.
+// Without auth that makes the proxy open to the whole network, so it needs
+// either credentials or an explicit lan_discovery.
+func (s *Service) discoveryEnabled() bool {
+	return s.opts.SocksUser != "" || s.opts.LANDiscovery
+}
+
+// discoverClient registers the peer of a LAN connection for pinning. The
+// client ARPed for us before its SYN, so the kernel already knows its
+// current MAC. Runs in the connection goroutine, before ServeConn.
+func (s *Service) discoverClient(ctx context.Context, conn net.Conn) {
+	ap, ok := remoteAddrPort(conn)
+	if !ok {
+		return
+	}
+
+	state := s.GetState()
+	if state.LANInterface == "" || !state.LANSubnet.Contains(ap.Addr()) {
+		return
+	}
+
+	ip := ap.Addr().String()
+	now := time.Now()
+
+	mac, lastSeen, known := s.clients.lookup(ip)
+	if !needsRefresh(known, mac, lastSeen, now) {
+		return
+	}
+
+	mac = ""
+	if e, found := s.arp.lookup(ctx, ip); found && e.Iface == state.LANInterface {
+		mac = e.MAC
+	}
+
+	if s.clients.seen(ip, mac, now) {
+		slog.Info("LAN client discovered", "ip", ip, "mac", mac)
+	}
+}
+
+// needsRefresh throttles discovery lookups. A client without a MAC is looked
+// up on every connection: until it has one the pinner cannot protect it.
+func needsRefresh(known bool, mac string, lastSeen, now time.Time) bool {
+	return !known || mac == "" || now.Sub(lastSeen) >= clientRefreshInterval
 }

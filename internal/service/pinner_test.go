@@ -58,8 +58,10 @@ func TestPinClients(t *testing.T) {
 		"192.168.0.8": {MAC: learnedMAC, Iface: "utun4"},
 	}}
 
+	s.arp = arp.ops()
+
 	state := State{LANInterface: "en0", LANSubnet: netip.MustParsePrefix("192.168.0.0/24")}
-	s.pinClients(t.Context(), arp.ops(), state)
+	s.pinClients(t.Context(), state)
 
 	if want := []string{discoveredIP + " " + learnedMAC + " en0"}; !slices.Equal(arp.pinned, want) {
 		t.Errorf("pinned = %v, want %v", arp.pinned, want)
@@ -79,7 +81,8 @@ func TestPinClients(t *testing.T) {
 	// second tick: adopted entries now match, nothing changes
 	arp.pinned = nil
 	arp.entries[discoveredIP] = route.ArpEntry{MAC: learnedMAC, Iface: "en0"}
-	s.pinClients(t.Context(), arp.ops(), state)
+
+	s.pinClients(t.Context(), state)
 
 	if len(arp.pinned) != 0 {
 		t.Errorf("steady state must not re-pin, got %v", arp.pinned)

@@ -240,6 +240,10 @@ func (s *Service) acceptConns(ctx context.Context, l net.Listener, server *socks
 		go func() {
 			defer s.conns.remove(conn)
 
+			if lan && s.discoveryEnabled() {
+				s.discoverClient(ctx, conn)
+			}
+
 			_ = server.ServeConn(conn)
 		}()
 	}

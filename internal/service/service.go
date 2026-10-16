@@ -44,6 +44,7 @@ type Service struct {
 	clients    *clientRegistry
 	conns      *connTracker
 	ciscoReady chan struct{}
+	arp        pinOps
 	status     State
 	opts       Options
 	mu         sync.RWMutex
@@ -64,6 +65,7 @@ func New(opts Options) *Service {
 		clients:    newClientRegistry(opts.LANClients),
 		conns:      newConnTracker(),
 		ciscoReady: make(chan struct{}),
+		arp:        pinOps{lookup: route.LookupARP, pin: route.Pin},
 	}
 }
 
@@ -103,13 +105,12 @@ func (s *Service) Start(ctx context.Context) error {
 	return g.Wait()
 }
 
-// pinOps are the shell operations of a pinner tick, swapped out in tests.
+// pinOps are the ARP shell operations of the pinner and the discovery hook,
+// swapped out in tests.
 type pinOps struct {
 	lookup func(ctx context.Context, ip string) (route.ArpEntry, bool)
 	pin    func(ctx context.Context, ip, mac, iface string) error
 }
-
-var shellPinOps = pinOps{lookup: route.LookupARP, pin: route.Pin}
 
 func (s *Service) startPinner(ctx context.Context) error {
 	select {
@@ -134,7 +135,7 @@ func (s *Service) startPinner(ctx context.Context) error {
 			continue
 		}
 
-		s.pinClients(ctx, shellPinOps, state)
+		s.pinClients(ctx, state)
 	}
 
 	return nil
@@ -143,7 +144,7 @@ func (s *Service) startPinner(ctx context.Context) error {
 // pinClients keeps every registered client in the current LAN subnet
 // reachable. The check is read-only; ARP is mutated only on drift (see
 // route.DecidePin), because a re-pin drops in-flight frames.
-func (s *Service) pinClients(ctx context.Context, ops pinOps, state State) {
+func (s *Service) pinClients(ctx context.Context, state State) {
 	for ip, mac := range s.clients.snapshot() {
 		// a static client of another network must not be pinned here: the
 		// IP belongs to someone else (or no one) in this one
@@ -151,7 +152,7 @@ func (s *Service) pinClients(ctx context.Context, ops pinOps, state State) {
 			continue
 		}
 
-		entry, found := ops.lookup(ctx, ip)
+		entry, found := s.arp.lookup(ctx, ip)
 
 		switch route.DecidePin(entry, found, mac, state.LANInterface) {
 		case route.PinAdopt:
@@ -163,7 +164,7 @@ func (s *Service) pinClients(ctx context.Context, ops pinOps, state State) {
 				slog.Warn("LAN client MAC changed", "ip", ip, "old", mac, "new", entry.MAC)
 			}
 		case route.PinRepin:
-			if err := ops.pin(ctx, ip, mac, state.LANInterface); err != nil {
+			if err := s.arp.pin(ctx, ip, mac, state.LANInterface); err != nil {
 				slog.Debug("arp pin failed", "ip", ip, "error", err)
 			} else {
 				slog.Info("LAN client pinned", "ip", ip, "mac", mac)

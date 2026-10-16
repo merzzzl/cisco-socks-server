@@ -282,11 +282,11 @@ func (r *clientRegistry) resetNetwork() // удалить обнаруженны
 - Modify: `internal/service/proxy.go`
 
 - [x] `State.LANSubnet netip.Prefix`, заполнять в `detectLAN` (сделано в Task 3)
-- [ ] `acceptConns` — метод с флагом `lan`; хук только для LAN-соединений и только при `discoveryEnabled`
-- [ ] хук: проверка подсети, `needsRefresh`, `LookupARP`, `registry.seen`; в горутине соединения до `ServeConn`
-- [ ] Info «LAN client discovered» только для новых IP
-- [ ] тесты: `needsRefresh` (неизвестный / пустой MAC / свежий / устаревший `LastSeen`); проверка подсети
-- [ ] `make test` — должно пройти
+- [x] `acceptConns` — метод с флагом `lan`; хук только для LAN-соединений и только при `discoveryEnabled`
+- [x] хук: проверка подсети, `needsRefresh`, `LookupARP`, `registry.seen`; в горутине соединения до `ServeConn`
+- [x] Info «LAN client discovered» только для новых IP
+- [x] тесты: `needsRefresh` (неизвестный / пустой MAC / свежий / устаревший `LastSeen`); проверка подсети
+- [x] `make test` — должно пройти
 
 ### Task 5: Отслеживание смены сети и переоткрытие LAN-листенера
 
