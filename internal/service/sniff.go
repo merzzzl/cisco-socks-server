@@ -67,7 +67,9 @@ func (s *Service) sniffLAN(ctx context.Context, lan lanSnapshot) error {
 		}
 	}()
 
-	err := s.watchSYN(ctx, lan.Iface, proxyPort, s.observeSYN)
+	err := s.watchSYN(ctx, lan.Iface, proxyPort, func(ip netip.Addr, mac string) {
+		s.observeSYN(ctx, ip, mac)
+	})
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -81,7 +83,7 @@ func (s *Service) sniffLAN(ctx context.Context, lan lanSnapshot) error {
 
 // observeSYN registers the sender of a SYN with the MAC from its frame,
 // which is the freshest one there is (private Wi-Fi MACs rotate).
-func (s *Service) observeSYN(ip netip.Addr, mac string) {
+func (s *Service) observeSYN(ctx context.Context, ip netip.Addr, mac string) {
 	state := s.GetState()
 	if state.LANInterface == "" || !state.LANSubnet.Contains(ip) || ip == state.LANAddr {
 		return
@@ -90,6 +92,10 @@ func (s *Service) observeSYN(ip netip.Addr, mac string) {
 	key := ip.String()
 	old, _, known := s.clients.lookup(key)
 
+	if mac != old {
+		s.repinStale(ctx, state, key, mac)
+	}
+
 	s.clients.seen(key, mac, time.Now())
 
 	switch {
@@ -97,5 +103,27 @@ func (s *Service) observeSYN(ip netip.Addr, mac string) {
 		slog.Info("LAN client discovered", "ip", key, "mac", mac)
 	case old != "" && old != mac:
 		slog.Warn("LAN client MAC changed", "ip", key, "old", old, "new", mac)
+	}
+}
+
+// repinStale replaces a kernel entry on the LAN interface that disagrees with
+// the frame, typically our own earlier pin with a MAC the client has rotated
+// away from. The pinner would adopt that entry back (DecidePin trusts the
+// kernel), so the frame has to win here. A missing entry is left to the
+// pinner, which re-pins it with the registry MAC anyway.
+func (s *Service) repinStale(ctx context.Context, state State, ip, mac string) {
+	if !state.CiscoConnected {
+		return
+	}
+
+	entry, found := s.arp.lookup(ctx, ip)
+	if !found || entry.Iface != state.LANInterface || entry.MAC == mac {
+		return
+	}
+
+	if err := s.arp.pin(ctx, ip, mac, state.LANInterface); err != nil {
+		slog.Debug("arp pin failed", "ip", ip, "error", err)
+	} else {
+		slog.Info("LAN client pinned", "ip", ip, "mac", mac)
 	}
 }

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"maps"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/merzzzl/cisco-socks-server/internal/utils/route"
 )
 
 const (
@@ -28,14 +31,52 @@ func TestObserveSYN(t *testing.T) {
 	s := New(Options{SocksUser: "u", SocksPassword: "p", LANClients: []LANClient{{IP: staticIP, MAC: staticMAC}}})
 	s.setStatus(func(st *State) { *st = lanState() })
 
-	s.observeSYN(netip.MustParseAddr(discoveredIP), learnedMAC)
-	s.observeSYN(netip.MustParseAddr(staticIP), rotatedMAC) // the frame wins
-	s.observeSYN(netip.MustParseAddr(selfIP), learnedMAC)   // our own outbound SYN
-	s.observeSYN(netip.MustParseAddr("10.0.0.5"), learnedMAC)
+	ctx := t.Context()
+	s.observeSYN(ctx, netip.MustParseAddr(discoveredIP), learnedMAC)
+	s.observeSYN(ctx, netip.MustParseAddr(staticIP), rotatedMAC) // the frame wins
+	s.observeSYN(ctx, netip.MustParseAddr(selfIP), learnedMAC)   // our own outbound SYN
+	s.observeSYN(ctx, netip.MustParseAddr("10.0.0.5"), learnedMAC)
 
 	want := map[string]string{discoveredIP: learnedMAC, staticIP: rotatedMAC}
 	if got := s.clients.snapshot(); !maps.Equal(got, want) {
 		t.Errorf("registry = %v, want %v", got, want)
+	}
+}
+
+// A client rotated its MAC while our old pin is still in the kernel and its
+// own ARP cache is warm: the SYN is the only sign, and it must win over the
+// stale entry, or the pinner adopts the old MAC back and nothing re-pins.
+func TestObserveSYNRotatedMAC(t *testing.T) {
+	t.Parallel()
+
+	s := New(Options{SocksUser: "u", SocksPassword: "p", LANClients: []LANClient{{IP: staticIP, MAC: staticMAC}}})
+	s.setStatus(func(st *State) {
+		*st = lanState()
+		st.CiscoConnected = true
+	})
+
+	arp := &fakeARP{entries: map[string]route.ArpEntry{staticIP: {MAC: staticMAC, Iface: "en0"}}}
+	s.arp = arp.ops()
+
+	s.observeSYN(t.Context(), netip.MustParseAddr(staticIP), rotatedMAC)
+
+	if want := []string{staticIP + " " + rotatedMAC + " en0"}; !slices.Equal(arp.pinned, want) {
+		t.Fatalf("pinned = %v, want %v", arp.pinned, want)
+	}
+
+	// the kernel now holds the frame's MAC: the pinner keeps it
+	arp.pinned = nil
+	arp.entries[staticIP] = route.ArpEntry{MAC: rotatedMAC, Iface: "en0"}
+
+	s.pinClients(t.Context(), s.GetState())
+	s.observeSYN(t.Context(), netip.MustParseAddr(staticIP), rotatedMAC)
+
+	if len(arp.pinned) != 0 {
+		t.Errorf("steady state must not re-pin, got %v", arp.pinned)
+	}
+
+	if mac, _, _ := s.clients.lookup(staticIP); mac != rotatedMAC {
+		t.Errorf("registry MAC = %q, want %q", mac, rotatedMAC)
 	}
 }
 
