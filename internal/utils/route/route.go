@@ -16,17 +16,17 @@ var (
 	errNoIPv4         = errors.New("no IPv4 address")
 )
 
-// DetectLAN finds the physical LAN interface and its subnet: the interface of
-// the non-tunnel default route, else an up interface with an RFC 1918
-// address. In that fallback prefer (the interface in use, may be empty) wins
+// DetectLAN finds the physical LAN interface and its IPv4 address with the
+// prefix length (Masked() is the subnet): the interface of the non-tunnel
+// default route, else an up interface with an RFC 1918 address. In that fallback prefer (the interface in use, may be empty) wins
 // while it still qualifies, so a transient loss of the default route does not
 // flip the LAN to a bridge or a USB NIC.
 func DetectLAN(ctx context.Context, prefer string) (netip.Prefix, string, error) {
 	out, err := shell.Run(ctx, "netstat", "-rn", "-f", "inet")
 	if err == nil {
 		if name := parseDefaultNonTunnel(out); name != "" {
-			if subnet, cerr := connectedPrefix(name); cerr == nil {
-				return subnet, name, nil
+			if ifaddr, cerr := connectedPrefix(name); cerr == nil {
+				return ifaddr, name, nil
 			}
 		}
 	}
@@ -41,7 +41,7 @@ func DetectLAN(ctx context.Context, prefer string) (netip.Prefix, string, error)
 		return netip.Prefix{}, "", ErrNoLANInterface
 	}
 
-	return c.subnet, c.iface, nil
+	return c.ifaddr, c.iface, nil
 }
 
 func parseDefaultNonTunnel(netstatOutput string) string {
@@ -83,19 +83,19 @@ func connectedPrefix(iface string) (netip.Prefix, error) {
 			continue
 		}
 
-		subnet, ok := ipv4Prefix(ipnet)
-		if !ok || subnet.Addr().IsLoopback() || subnet.Addr().IsLinkLocalUnicast() {
+		ifaddr, ok := ipv4Prefix(ipnet)
+		if !ok || ifaddr.Addr().IsLoopback() || ifaddr.Addr().IsLinkLocalUnicast() {
 			continue
 		}
 
-		return subnet, nil
+		return ifaddr, nil
 	}
 
 	return netip.Prefix{}, fmt.Errorf("%w on %s", errNoIPv4, iface)
 }
 
 type lanCandidate struct {
-	subnet netip.Prefix
+	ifaddr netip.Prefix
 	iface  string
 }
 
@@ -132,12 +132,12 @@ func rfc1918Candidates() ([]lanCandidate, error) {
 			}
 
 			// IsPrivate on an IPv4 address is exactly the RFC 1918 ranges
-			subnet, ok := ipv4Prefix(ipnet)
-			if !ok || !subnet.Addr().IsPrivate() {
+			ifaddr, ok := ipv4Prefix(ipnet)
+			if !ok || !ifaddr.Addr().IsPrivate() {
 				continue
 			}
 
-			cands = append(cands, lanCandidate{subnet: subnet, iface: ifi.Name})
+			cands = append(cands, lanCandidate{ifaddr: ifaddr, iface: ifi.Name})
 
 			break
 		}
@@ -161,7 +161,8 @@ func pickCandidate(cands []lanCandidate, prefer string) (lanCandidate, bool) {
 	return cands[0], true
 }
 
-// ipv4Prefix converts an interface address to its masked IPv4 subnet.
+// ipv4Prefix converts an interface address to an IPv4 prefix that keeps the
+// host address (not masked).
 func ipv4Prefix(ipnet *net.IPNet) (netip.Prefix, bool) {
 	addr, ok := netip.AddrFromSlice(ipnet.IP.To4())
 	if !ok {
@@ -177,7 +178,7 @@ func ipv4Prefix(ipnet *net.IPNet) (netip.Prefix, bool) {
 		return netip.Prefix{}, false
 	}
 
-	return netip.PrefixFrom(addr, ones).Masked(), true
+	return netip.PrefixFrom(addr, ones), true
 }
 
 // ArpEntry is a resolved `arp -n <ip>` entry.

@@ -35,10 +35,7 @@ func (f *fakeARP) ops() pinOps {
 func TestPinClients(t *testing.T) {
 	t.Parallel()
 
-	const (
-		rotatedMAC = "82:b4:3b:8e:d2:f3"
-		otherNetIP = "10.0.0.5"
-	)
+	const otherNetIP = "10.0.0.5"
 
 	s := New(Options{LANClients: []LANClient{
 		{IP: staticIP, MAC: staticMAC},

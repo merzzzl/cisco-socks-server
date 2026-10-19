@@ -140,8 +140,8 @@ func TestIPv4Prefix(t *testing.T) {
 		want  string
 		ok    bool
 	}{
-		{&net.IPNet{IP: net.IPv4(192, 168, 0, 42).To4(), Mask: net.CIDRMask(24, 32)}, "192.168.0.0/24", true},
-		{&net.IPNet{IP: net.IPv4(10, 1, 2, 3), Mask: net.CIDRMask(112, 128)}, "10.1.0.0/16", true},
+		{&net.IPNet{IP: net.IPv4(192, 168, 0, 42).To4(), Mask: net.CIDRMask(24, 32)}, "192.168.0.42/24", true},
+		{&net.IPNet{IP: net.IPv4(10, 1, 2, 3), Mask: net.CIDRMask(112, 128)}, "10.1.2.3/16", true},
 		{&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, "", false},
 	}
 
@@ -157,8 +157,8 @@ func TestPickCandidate(t *testing.T) {
 	t.Parallel()
 
 	cands := []lanCandidate{
-		{subnet: netip.MustParsePrefix("192.168.64.0/24"), iface: "bridge100"},
-		{subnet: netip.MustParsePrefix("192.168.0.0/24"), iface: "en0"},
+		{ifaddr: netip.MustParsePrefix("192.168.64.1/24"), iface: "bridge100"},
+		{ifaddr: netip.MustParsePrefix("192.168.0.105/24"), iface: "en0"},
 	}
 
 	if c, _ := pickCandidate(cands, "en0"); c.iface != "en0" {

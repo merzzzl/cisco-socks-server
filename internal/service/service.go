@@ -47,6 +47,7 @@ type Service struct {
 	ciscoReady chan struct{}
 	lanCheck   chan struct{} // LAN changed: the LAN listener re-checks State
 	arp        pinOps
+	watchSYN   func(ctx context.Context, iface, port string, onSYN func(netip.Addr, string)) error
 	listenLAN  func(ctx context.Context, iface string) (net.Listener, error)
 	status     State
 	opts       Options
@@ -55,6 +56,7 @@ type Service struct {
 
 type State struct {
 	LANSubnet      netip.Prefix
+	LANAddr        netip.Addr // our own address on LANInterface
 	LANInterface   string
 	CiscoConnected bool
 	PFDisabled     bool
@@ -70,6 +72,7 @@ func New(opts Options) *Service {
 		ciscoReady: make(chan struct{}),
 		lanCheck:   make(chan struct{}, 1),
 		arp:        pinOps{lookup: route.LookupARP, pin: route.Pin},
+		watchSYN:   route.WatchSYN,
 		listenLAN:  listenBoundToInterface,
 	}
 }
@@ -105,6 +108,10 @@ func (s *Service) Start(ctx context.Context) error {
 
 	g.Go(func() error {
 		return s.startPinner(ctx)
+	})
+
+	g.Go(func() error {
+		return s.startSniffer(ctx)
 	})
 
 	return g.Wait()
@@ -154,6 +161,12 @@ func (s *Service) pinClients(ctx context.Context, state State) {
 		// a static client of another network must not be pinned here: the
 		// IP belongs to someone else (or no one) in this one
 		if addr, err := netip.ParseAddr(ip); err != nil || !state.LANSubnet.Contains(addr) {
+			continue
+		}
+
+		// our own address (a lan_clients typo): there is no ARP entry to
+		// pin, arp -S only fails with "can only proxy"
+		if ip == state.LANAddr.String() {
 			continue
 		}
 

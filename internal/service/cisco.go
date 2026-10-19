@@ -93,7 +93,7 @@ func (sv *ciscoSupervisor) tick(ctx context.Context) time.Duration {
 func (sv *ciscoSupervisor) detectLAN(ctx context.Context) {
 	cur := sv.s.lanSnapshot()
 
-	subnet, iface, err := route.DetectLAN(ctx, cur.Iface)
+	ifaddr, iface, err := route.DetectLAN(ctx, cur.Iface)
 	if err != nil {
 		if !errors.Is(err, route.ErrNoLANInterface) {
 			slog.Warn("failed to detect LAN", "error", err)
@@ -104,8 +104,17 @@ func (sv *ciscoSupervisor) detectLAN(ctx context.Context) {
 		return
 	}
 
+	subnet, addr := ifaddr.Masked(), ifaddr.Addr()
+
 	next := lanSnapshot{Subnet: subnet, Iface: iface}
 	if !sv.confirmLAN(cur, next) {
+		// DHCP can hand out another address within the same subnet
+		if next == cur {
+			sv.s.setStatus(func(st *State) {
+				st.LANAddr = addr
+			})
+		}
+
 		return
 	}
 
@@ -121,8 +130,11 @@ func (sv *ciscoSupervisor) detectLAN(ctx context.Context) {
 
 	sv.s.setStatus(func(st *State) {
 		st.LANSubnet = subnet
+		st.LANAddr = addr
 		st.LANInterface = iface
 	})
+
+	sv.s.warnSelfClients(addr)
 
 	sv.s.notifyLANCheck()
 }

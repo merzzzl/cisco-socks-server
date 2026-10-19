@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -140,6 +141,16 @@ func (r *clientRegistry) resetNetwork() {
 
 	for _, e := range r.clients {
 		e.mac = ""
+	}
+}
+
+// warnSelfClients flags lan_clients entries that hold our own LAN address:
+// the pinner skips them, and the actual client stays unreachable.
+func (s *Service) warnSelfClients(self netip.Addr) {
+	for _, lc := range s.opts.LANClients {
+		if lc.IP == self.String() {
+			slog.Warn("lan_clients entry is this host's own address, ignored", "ip", lc.IP)
+		}
 	}
 }
 
